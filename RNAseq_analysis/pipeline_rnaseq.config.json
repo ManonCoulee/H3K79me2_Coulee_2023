@@ -1,0 +1,24 @@
+{
+"description": "",
+"author": "",
+"general_path": {
+"OUTPUT_PATH": "/scratch/tmp/mcoulee/SPIN1"
+},
+"general_informations": {
+"ADAPTERS": "/scratch/recherche/rdaveau/dropbox/Illumina_adapters.fa",
+"STAR_INDEX": "/scratch/tmp/mcoulee/STAR_spike_index_2.7.2d",
+"MIN_READ_LENGTH": 50
+},
+
+"samples": {
+"PAP445","PAP447","PAP452","PAP454","PAP455","PAP461"
+},
+
+"bbduk": {
+"OPTIONS": "threads=2 tpe tbo hdist=1 qtrim=rl trimq=20"
+},
+
+"star_alignReads": {
+"OPTIONS": "--runMode alignReads --outSAMtype BAM SortedByCoordinate --runThreadN 8 --sjdbOverhang 75 --readFilesCommand zcat --outMultimapperOrder Random --quantMode GeneCounts"
+}
+}

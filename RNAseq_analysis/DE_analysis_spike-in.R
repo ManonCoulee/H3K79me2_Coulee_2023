@@ -1,16 +1,16 @@
 ####################################################################################################
-##                                               LIBRARIES
+##                                       LIBRARIES
 ####################################################################################################
 
 rm(list = ls())
 options(warn = -1, width = 150)
 
-rlibs = c('ggplot2', 'RColorBrewer', 'edgeR', 'DESeq2', 'FactoMineR', 'reshape', 'TCseq', 'statmod',
+rlibs = c('ggplot2', 'RColorBrewer', 'edgeR', 'DESeq2', 'reshape', 'TCseq', 'statmod',
   'GenomicFeatures','RUVseq')
 invisible(lapply(rlibs, function(x) suppressMessages(library(x, character.only = TRUE))))
 
 ####################################################################################################
-##                                               INITIALIZATION
+##                                    INITIALIZATION
 ####################################################################################################
 
 wd = '.'
@@ -31,7 +31,7 @@ SamplePlan$CellType = factor(SamplePlan$CellType,levels = CT)
 SamplePlan$SamplePool = factor(SamplePlan$SamplePool)
 
 ####################################################################################################
-##                                             GENE EXPRESSED
+##                                   Gene expression count
 ####################################################################################################
 
 x = as.data.frame(sapply(paste0(SamplePlan$SamplePath,"/",rownames(SamplePlan)), function(path){
@@ -65,17 +65,27 @@ genecounts = list(
     colData = SamplePlan, design = ~1)))[expressed_genes, ]
 )
 
-####################################################################################################
-##                                   DE ANALYSIS without spike-in scaling
-####################################################################################################
+gene_annotation = data.frame(do.call(rbind, strsplit(x = gsub(
+  pattern = "^>", replacement = '', x = unlist(system(paste('zgrep -P "^>"',
+    file.path('~/Documents/Annotations/gencode.vM19.transcripts.fa.gz')), intern = T)),
+  perl = T), split = '|', fixed = T)), stringsAsFactors = F)
+names(gene_annotation) = c('tx_ENS', 'gene_ENS', 'gene_OTT', 'tx_OTT', 'tx_name', 'gene_name',
+  'tx_length', 'gene_type')
+gene_annotation[gene_annotation == '-'] = NA
+gene_annotation$tx_length = as.numeric(gene_annotation$tx_length)
 
-cell = factor(SamplePlan$CellType)
-phenotype = relevel(SamplePlan$SampleType, ref = "CTL")
+## Estimating gene_length by using GenomicFeatures
+txdb = makeTxDbFromGFF(file.path('~/Documents/Annotations/gencode.vM19.annotation.gtf'),
+  format = 'gtf')
+exons.list.per.gene = exonsBy(x = txdb, by = 'gene')
+## Same but much faster
+exonic.gene.sizes = sum(width(reduce(exons.list.per.gene)))
+genecounts$rpkm = rpkm(y = x3, gene.length = exonic.gene.sizes[match(names(exonic.gene.sizes),
+  rownames(x3))], normalized.lib.sizes = T, log = F)[expressed_genes, ]
 
-## Create a model with all multifactor combinations
-design = model.matrix(~phenotype+cell+phenotype:cell)
-colnames(design) = c("all","KOvsCTL.Kitm","CTL.Kitp","CTL.RS","CTL.SC","CTL.SCII","KOvsCTL.Kitp",
-  "KOvsCTL.RS","KOvsCTL.SC","KOvsCTL.SCII")
+  m_export = unique(subset(gene_annotation[, -grep('tx_', x = names(gene_annotation))],
+    select = -gene_type))
+  rownames(m_export) = m_export$gene_ENS
 
 ####################################################################################################
 ##                         DE ANALYSIS with spike-in normalization (RUV method)
@@ -84,11 +94,10 @@ colnames(design) = c("all","KOvsCTL.Kitm","CTL.Kitp","CTL.RS","CTL.SC","CTL.SCII
 genetable = genecounts$raw
 
 DEG_spike = lapply(unique(SamplePlan$CellType), function(cell) {
+  ## Rescale data using RUVg method
   path = SamplePlan[SamplePlan$CellType == cell,]
   path$sample = paste0(path$SamplePath,"/",rownames(path))
-  zfGenes = genetable[,path$sample]
-  filter <- apply(zfGenes, 1, function(x) length(x[x>5])>=2)
-  filtered <- zfGenes[filter,]
+  filtered = genetable[,path$sample]
   genes <- rownames(filtered)[grep("^ENS", rownames(filtered))]
   spikes <- rownames(filtered)[grep("^ERCC", rownames(filtered))]
   x <- as.factor(path$SampleType)
@@ -96,30 +105,65 @@ DEG_spike = lapply(unique(SamplePlan$CellType), function(cell) {
     phenoData = data.frame(x, row.names=colnames(filtered)))
   set <- betweenLaneNormalization(set, which="upper")
   set1 <- RUVg(set, spikes, k=1)
+
+  ## Make model design
   design <- model.matrix(~x + W_1, data=pData(set1))
+
+  ## Process differential gene analysis
   y <- DGEList(counts=counts(set1), group=x)
   y <- calcNormFactors(y)
+  # y <- estimateDisp(y = y, design = design)
   y <- estimateGLMCommonDisp(y, design)
   y <- estimateGLMTagwiseDisp(y, design)
 
   fit <- glmFit(y, design)
   qlf = glmTreat(glmfit = fit, coef = "xKO", lfc = log(1.5))
-  # lrt <- glmLRT(fit)
   tt = with(topTags(object = qlf, n = NULL, sort.by = 'none'), table)
-
   tt$gl = 0
   tt$gl[tt$FDR <= 0.05  & tt$logFC < -log(1.5)] = 1
   tt$gl[tt$FDR <= 0.05  & tt$logFC > log(1.5)] = 2
   tt$gl[grepl("ERCC",rownames(tt))] = 3
-  tt$gl = factor(tt$gl, levels = c(1, 0, 2, 3), labels = c('Down-regulated', 'Not regulated',
-    'Up-regulated',"ERCC"))
+  tt$gl = factor(tt$gl, levels = c(1, 0, 2, 3), labels = c('Down-regulated in SCII', 'Not regulated',
+    'Up-regulated in SCII',"ERCC"))
   tt$cell = cell
   tt = tt[tt$gl != "ERCC",]
-  write.table(tt,paste0("DOT1L_KO_effect_within_",cell,"_cells_volcano_table_FDR.tsv"),
-    row.names = F, col.names = T, sep = "\t", quote = F)
+  tt$gene_ENS = rownames(tt)
 
+  ## Make a MD plot
+  p = ggplot(data = tt) +
+    geom_point(aes(x = logFC, y = -log10(PValue), color = gl), size = 5, alpha = .5) +
+    geom_vline(xintercept = c(-log2(1.5), log2(1.5)), alpha = .5,
+      color = 'grey50', linetype = 'dashed') +
+    geom_hline(yintercept = -log10(0.05), alpha = .5, color = 'grey50',
+      linetype = 'dashed') +
+    # scale_color_manual(name = 'Gene expression', values = c(brewer.pal(9,'Paired')[c(2,1)],
+    #   brewer.pal(9,'Set1')[c(9)],brewer.pal(9,'Paired')[c(5,6)])) +
+    scale_color_manual(name = 'Gene expression', values = c(brewer.pal(9,'Set1')[c(2,9,1)])) +
+    labs(title = paste(paste0('FC>',1.5),paste0('& FDR<',100*0.05,'%'),
+        'V plot'),
+      x = 'Log Fold-change',y = '-Log10(P)') +
+    theme(
+      plot.title = element_text(size = rel(2), lineheight = 2, vjust = 1, face = 'bold'),
+      plot.subtitle = element_text(size = rel(1.2), face = 'bold'),
+      legend.title = element_text(size = rel(1.5)),
+      legend.text = element_text(size = rel(1.5)),
+      axis.title = element_text(size = rel(1.5)),
+      axis.text = element_text(size = rel(1.5)),
+      panel.border = element_rect(colour = 'grey50', fill = NA)
+    )
+  ggsave(file.path(rout, paste0(gsub(pattern = ' ',replacement = '_', x = cell),'_volcano_plot_FDR.png')),
+    plot = p, width = 10, height = 8, device = 'png', dpi = 300)
+
+  write.table(file.path(rout,paste0(gsub(pattern = ' ', replacement = '_', x = cell),
+      '_volcano_table_FDR.tsv')),
+      x = data.frame(m_export[rownames(tt),],tt, check.names = F), sep = "\t",
+      row.names = F, quote = F)
   return(tt)
 })
+
+####################################################################################################
+##                                DE ANALYSIS count barplot figure
+####################################################################################################
 
 df = do.call("rbind",DEG_spike)
 
@@ -141,4 +185,4 @@ p = ggplot(df[df$gl != "Not regulated",],
     legend.position = "bottom") +
   guides(fill = "none")
 
-ggsave('distribution_barplot_spike-in_RUV.png', plot = p, width = 10, height = 6, device = 'png', dpi = 300)
+ggsave('distribution_barplot_spike-in.png', plot = p, width = 10, height = 6, device = 'png', dpi = 300)

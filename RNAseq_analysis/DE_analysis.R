@@ -111,8 +111,8 @@ ggsave(file.path(rout, 'MDS_SC_RS.png'), plot = p, width = 12, height = 8, devic
 
 fit = glmQLFit(y = y, design = design, robust = T)
 
+## Make contrast name
 cmp = makeContrasts(
-
   ## Model Kit-/Kit+
   'DOT1L KO effect within Kit- cells' = KOvsCTL.Kitm,
   'DOT1L KO effect within Kit+ cells' = KOvsCTL.Kitm + KOvsCTL.Kitp,
@@ -161,11 +161,15 @@ invisible(lapply(names(DEG), function(x){
     row.names = F, quote = F)
 }))
 
+####################################################################################################
+##                                         DE analysis plot
+####################################################################################################
 
-## DEG / MD plots
 invisible(lapply(names(DEG), function(x){
   tt = DEG[[x]]
   print(head(tt))
+
+  ## Barplot count
   p = ggplot(data = tt) +
     geom_point(aes(x = logFC, y = -log10(PValue), color = gl), size = 5, alpha = .5) +
     geom_vline(xintercept = c(-log2(thresholds[x,'FC']), log2(thresholds[x,'FC'])), alpha = .5,
@@ -190,6 +194,7 @@ invisible(lapply(names(DEG), function(x){
   ggsave(file.path(rout, paste0(gsub(pattern = ' ',replacement = '_', x = x),'_volcano_plot_FDR_PV.png')),
     plot = p, width = 10, height = 8, device = 'png', dpi = 300)
 
+  ## Volcano table
   df = data.frame(gl = levels(tt$gl), n = as.numeric(table(tt$gl)), stringsAsFactors = F)
   df$gl = factor(df$gl, levels = df$gl)
   df$X = factor(df$gl, levels = df$gl[order(df$n, decreasing = T)])
@@ -220,6 +225,7 @@ invisible(lapply(names(DEG), function(x){
   ggsave(file.path(rout, paste0(gsub(pattern = ' ', replacement = '_', x = x),
     '_volcano_table_FDR_PV.png')), plot = p, width = 8, height = 8, device = 'png', dpi = 300)
 
+  ## MD plot
   p = ggplot(data = tt) +
     geom_point(aes(x = logCPM, y = logFC, color = gl), size = 5, alpha = .5) +
     geom_hline(yintercept = c(-log2(thresholds[x, 'FC']), log2(thresholds[x, 'FC'])), alpha = .5,

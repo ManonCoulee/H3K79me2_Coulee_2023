@@ -1,0 +1,139 @@
+workdir: config["general_path"]["OUTPUT_PATH"]
+
+sample_ids  = []
+output_path = config["general_path"]["OUTPUT_PATH"]
+mate_ids    = ["R1","R2"]
+
+for sample_id in config["samples"].keys():
+	sample_ids.append(sample_id)
+
+## import raw fastq.gz files (rule: import_fastq)
+import_fastq = expand(
+	output_path + "/{sample_id}/{sample_id}.{mate_id}.fastq.gz",
+	sample_id = sample_ids, mate_id = mate_ids
+)
+## trim / clean raw fastq.gz files (rule: bbduk)
+bbduk = expand(
+	output_path + "/{sample_id}/{sample_id}.{mate_id}_cleaned.fastq.gz",
+	sample_id = sample_ids, mate_id = mate_ids
+)
+## perform read mapping and gene-scaled quantification (rule: star_alignReads)
+star_alignReads = expand(
+	output_path + "/{sample_id}/{sample_id}.{ext}",
+	sample_id = sample_ids,
+	ext = ["ReadsPerGene.out.tab", "Log.final.out", "Aligned.sortedByCoord.out.bam"]
+)
+## rename / remove STAR output files (rule: star_cleanup)
+star_cleanup = expand(
+	output_path + "/{sample_id}/{sample_id}.{ext}",
+	sample_id = sample_ids,
+	ext = ["RPG.tsv", "STAR.log", "STAR.bam"]
+)
+## indexing final BAM (rule: samtools_index)
+samtools_index = expand(
+	output_path + "/{sample_id}/{sample_id}.STAR.bam.bai",
+	sample_id = sample_ids
+)
+## per chr read counts
+samtools_idxstats = expand(
+	output_path + "/{sample_id}/{sample_id}.STAR.idxstats",
+	sample_id = sample_ids
+)
+
+rule all:
+	input:
+		samtools_idxstats
+	shell:
+		"touch " + output_path + "/done"
+
+rule import_fastq:
+	input:
+		R1 = lambda wildcards: config["samples"][wildcards.sample]["R1_path"],
+		R2 = lambda wildcards: config["samples"][wildcards.sample]["R2_path"]
+	output:
+		R1 = temp("{prefix}/{sample}.R1.fastq.gz"),
+		R2 = temp("{prefix}/{sample}.R2.fastq.gz")
+	log:
+		"{prefix}/logs/{sample}_import_fastq.log"
+	shell:
+		'cp {input.R1} {output.R1} | tee -a {log} \
+		;cp {input.R2} {output.R2} \
+		2>&1 | tee -a {log}'
+
+rule bbduk:
+	input:
+		R1 = "{prefix}/{sample}/{sample}.R1.fastq.gz",
+		R2 = "{prefix}/{sample}/{sample}.R2.fastq.gz"
+	output:
+		R1 = "{prefix}/{sample}/{sample}.R1_cleaned.fastq.gz",
+		R2 = "{prefix}/{sample}/{sample}.R2_cleaned.fastq.gz"
+	log:
+		"{prefix}/{sample}/logs/{sample}_bbduk.log"
+	params:
+		bbduk_options = config["bbduk"]["OPTIONS"],
+		reference     = config["general_informations"]["ADAPTERS"],
+		read_length   = config["general_informations"]["MIN_READ_LENGTH"]
+	shell:
+		'bbduk.sh -Xmx7500m -eoom \
+			in1={input.R1} in2={input.R2} \
+			out1={output.R1} out2={output.R2} \
+			ref={params.reference} \
+			minlen={params.read_length} {params.bbduk_options} \
+			2>&1 | tee -a {log}'
+
+rule star_alignReads:
+	input:
+		R1 = "{prefix}/{sample}/{sample}.R1_cleaned.fastq.gz",
+		R2 = "{prefix}/{sample}/{sample}.R2_cleaned.fastq.gz"
+	output:
+		temp("{prefix}/{sample}/{sample}.Aligned.sortedByCoord.out.bam"),
+		temp("{prefix}/{sample}/{sample}.ReadsPerGene.out.tab"),
+		temp("{prefix}/{sample}/{sample}.Log.final.out"),
+		temp("{prefix}/{sample}/{sample}.Log.progress.out"),
+		temp("{prefix}/{sample}/{sample}.Log.out"),
+		temp("{prefix}/{sample}/{sample}.SJ.out.tab")
+	log:
+		"{prefix}/{sample}/logs/{sample}_star_alignReads.log"
+	params:
+		reference               = config["general_informations"]["STAR_INDEX"],
+		star_alignReads_options = config["star_alignReads"]["OPTIONS"]
+	shell:
+		'STAR {params.star_alignReads_options} --genomeDir {params.reference} \
+		--outFileNamePrefix {wildcards.prefix}/{wildcards.sample}/{wildcards.sample}. \
+		--readFilesIn {input.R1} {input.R2} 2>&1 | tee -a {log}'
+
+rule star_cleanup:
+	input:
+		RPG = "{prefix}/{sample}/{sample}.ReadsPerGene.out.tab",
+		LOG = "{prefix}/{sample}/{sample}.Log.final.out",
+		BAM = "{prefix}/{sample}/{sample}.Aligned.sortedByCoord.out.bam"
+	output:
+		RPG = "{prefix}/{sample}/{sample}.RPG.tsv",
+		LOG = "{prefix}/{sample}/{sample}.STAR.log",
+		BAM = "{prefix}/{sample}/{sample}.STAR.bam"
+	shell:
+		'mv {input.RPG} {output.RPG} \
+		;mv {input.LOG} {output.LOG} \
+		;mv {input.BAM} {output.BAM}'
+
+rule samtools_index:
+	input:
+		"{prefix}/{sample}/{filename}.bam"
+	output:
+		"{prefix}/{sample}/{filename}.bam.bai"
+	log:
+		"{prefix}/{sample}/logs/{sample}_samtools_index.log"
+	shell:
+		'samtools index {input} 1> {output} 2>&1 | tee -a {log}'
+
+rule samtools_idxstats:
+	input:
+		BAM = "{prefix}/{sample}/{filename}.bam",
+		BAI = "{prefix}/{sample}/{filename}.bam.bai"
+	output:
+		"{prefix}/{sample}/{filename}.idxstats"
+	log:
+		"{prefix}/{sample}/logs/{sample}_samtools_idxstats.log"
+	shell:
+		'samtools idxstats {input.BAM} 1> {output} 2>&1 | tee -a {log}'
+
