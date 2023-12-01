@@ -1,0 +1,25 @@
+{
+"description": "ChIPseq Analysis",
+"author": "Manon COULEE",
+
+"general_path": {
+"OUTPUT_PATH": "/scratch/tmp/mcoulee/H3K27me3"
+},
+
+"general_informations": {
+"FASTA": "/data/annotations/Mouse/GRCm38/GRCm38.p6.genome.fa",
+"ADAPTERS": "/scratch/recherche/rdaveau/dropbox/Illumina_adapters.fa",
+"BED": "/scratch/tmp/mcoulee/gencode.vM19.annotation.bed",
+"GTF": "/data/annotations/Mouse/GRCm38/DB/public/gencode/v19/gencode.vM19.annotation.gtf",
+"INDEX": "/scratch/tmp/mcoulee/bowtie2_index/mm",
+"MIN_READ_LENGTH": 50,
+"mark": "H3K27me3"
+},
+
+"samples": {
+"B","Undiff"
+},
+"bbduk": {
+"OPTIONS": "threads=2 tpe tbo hdist=1 qtrim=rl trimq=20"
+}
+}

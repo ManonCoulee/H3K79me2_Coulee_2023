@@ -1,0 +1,24 @@
+{
+"description": "",
+"author": "",
+"general_path": {
+"OUTPUT_PATH": "/scratch/tmp/mcoulee/RNAseq_spike_SPIN1"
+},
+"general_informations": {
+"ADAPTERS": "/scratch/recherche/rdaveau/dropbox/Illumina_adapters.fa",
+"STAR_INDEX": "/scratch/tmp/mcoulee/STAR_spike_index_2.7.2d",
+"MIN_READ_LENGTH": 50
+},
+
+"samples": {
+"500_SC-I_RNA_KO_S12","507_SC-I_RNA_CTL_S9","508_SC-I_RNA_CTL_S10","509_SC-I_RNA_KO_S13","512_SC-I_RNA_CTL_S11","513_SC-I_RNA_KO_S14"
+},
+
+"bbduk": {
+"OPTIONS": "threads=2 tpe tbo hdist=1 qtrim=rl trimq=20"
+},
+
+"star_alignReads": {
+"OPTIONS": "--runMode alignReads --outSAMtype BAM SortedByCoordinate --runThreadN 8 --sjdbOverhang 75 --readFilesCommand zcat --outMultimapperOrder Random --quantMode GeneCounts"
+}
+}

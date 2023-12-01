@@ -1,0 +1,187 @@
+#################################WORK DIRECTORY#################################
+
+workdir: config["general_path"]["OUTPUT_PATH"]
+
+####################################SAMPLES#####################################
+
+sample_ids = []
+dir_ids = []
+output_path = config["general_path"]["OUTPUT_PATH"]
+mark = config["general_informations"]["mark"]
+
+for dir in config["samples"].keys():
+	dir_ids.append(dir)
+	sample = "_".join((dir,mark))
+	input = "_".join((dir,"input"))
+	sample_ids.append(sample)
+	sample_ids.append(input)
+	#cell_types.append(sample_id[0:3])
+	#mark_type = sample_id.split("_")[1]
+	#if mark_type != "input" :
+	#	mark_types.append(mark_type)
+
+
+
+#################################FILES IMPORT###################################
+
+## import raw fastq.gz files (rule: import_fastq)
+#import_fastq = expand(
+#	output_path + "/{ID}/{sample_id}_{mate_id}.fq.gz",
+#	zip, sample_id = sample_ids, ID = cell_types, mate_id = mate_ids
+#)
+
+## trim / clean raw fastq.gz files (rule: bbduk)
+bbduk = expand(
+	output_path + "/{sample_id}/{sample_id}.cleaned.fastq.gz",
+	sample_id = sample_ids
+)
+
+## aligning reads to reference
+bowtie2 = expand(
+	output_path + "/{sample_id}/{sample_id}.sam",
+	zip, sample_id = sample_ids
+)
+
+samtools_view = expand(
+	output_path + "/{sample_id}/{sample_id}_unsorted.bam",
+	zip, sample_id = sample_ids
+)
+
+samtools_sort = expand(
+	output_path + "/{sample_id}/{sample_id}_sorted.bam",
+	zip, sample_id = sample_ids
+)
+
+samtools_index = expand(
+	output_path + "/{sample_id}/{sample_id}_sorted.bam.bai",
+	zip, sample_id = sample_ids
+)
+
+macs2 = expand(
+	output_path + "/{dir_id}_{mark_id}/{dir_id}_{mark_id}_macs2",
+	dir_id = dir_ids, mark_id = mark
+)
+
+bamCoverage = expand(
+	output_path + "/{sample_id}/{sample_id}.bw",
+	sample_id = sample_ids
+)
+
+##################################RULES BEGIN###################################
+
+rule all:
+	input:
+    		bamCoverage,
+		macs2,
+		samtools_sort
+	shell:
+		"touch " + output_path + "/done"
+
+#rule import_fastq:
+#	input:
+#		R1 = lambda wildcards: config["samples"][wildcards.sample]["R1_path"],
+#    		R2 = lambda wildcards: config["samples"][wildcards.sample]["R2_path"]
+#	output:
+#		R1 = temp("{prefix}/{ID}/{sample}_R1.fq.gz"),
+#    		R2 = temp("{prefix}/{ID}/{sample}_R2.fq.gz")
+#	log:
+#		"{prefix}/{ID}/logs/{sample}_import_fastq.log"
+#	shell:
+#		'cp {input.R1} {output.R1} | tee -a {log} \
+#    		; cp {input.R2} {output.R2} \
+#    		2>&1 | tee -a {log}'
+
+rule bbduk:
+	input:
+		"{prefix}/{sample}.fastq.gz"
+	output:
+		"{prefix}/{sample}/{sample}.cleaned.fastq.gz"
+	log:
+		"{prefix}/{sample}/logs/{sample}_bbduk.log"
+	params:
+		bbduk_options = config["bbduk"]["OPTIONS"],
+		reference     = config["general_informations"]["ADAPTERS"],
+		read_length   = config["general_informations"]["MIN_READ_LENGTH"]
+	shell:
+		'bbduk.sh -Xmx7500m -eoom \
+		in={input} \
+    		out={output} \
+		ref={params.reference} \
+		minlen={params.read_length} {params.bbduk_options} \
+		2>&1 | tee -a {log}'
+
+rule bowtie2:
+	input:
+		"{prefix}/{sample}/{sample}.cleaned.fastq.gz"
+	output:
+		"{prefix}/{sample}/{sample}.sam"
+	log:
+		"{prefix}/{sample}/logs/{sample}_bowtie2.log"
+	params:
+		index = config["general_informations"]["INDEX"]
+	shell:
+		'bowtie2 -p 8 -x {params.index} -S {output} \
+    		-U {input} \
+		--local -q 2>&1 | tee -a {log}'
+
+rule samtools_view:
+	input:
+		"{prefix}/{sample}/{sample}.sam"
+	output:
+		"{prefix}/{sample}/{sample}_unsorted.bam"
+	log:
+		"{prefix}/{sample}/logs/{sample}_samtools_view.log"
+	params:
+	shell:
+		'samtools view -h -S -b -@ 6 \
+		-o {output} \
+		{input} 2>&1 | tee -a {log}'
+
+rule samtools_sort:
+	input:
+		"{prefix}/{sample}/{sample}_unsorted.bam"
+	output:
+		"{prefix}/{sample}/{sample}_sorted.bam"
+	log:
+		"{prefix}/{sample}/logs/{sample}_samtools_sort.log"
+	params:
+	shell:
+		'samtools sort -@ 6 \
+		-o {output} {input} 2>&1 | tee -a {log}'
+
+rule samtools_index:
+	input:
+		"{prefix}/{sample}/{sample}_sorted.bam"
+	output:
+		"{prefix}/{sample}/{sample}_sorted.bam.bai"
+	log:
+		"{prefix}/{sample}/logs/{sample}_samtools_index.log"
+	shell:
+		'samtools index {input} {output} | tee -a {log}'
+
+rule macs2:
+	input:
+		t1 = "{prefix}/{dir}_{mark}/{dir}_{mark}_sorted.bam",
+		c1 = "{prefix}/{dir}_input/{dir}_input_sorted.bam"
+	output:
+		dir = "{prefix}/{dir}_{mark}/{dir}_{mark}_macs2",
+		peak = "{prefix}/{dir}_{mark}/{dir}_{mark}_macs2/{dir}_peaks.narrowPeak"
+	log:
+		"{prefix}/{dir}/logs/macs2.log"
+	shell:
+		'macs2 callpeak -t {input.t1} -n {wildcards.dir} \
+		-c {input.c1} \
+		-f BAM -g mm \
+		--outdir {output.dir} | tee -a {log}'
+
+rule bamCoverage:
+	input:
+		bam = "{prefix}/{sample}/{sample}_sorted.bam",
+		bai = "{prefix}/{sample}/{sample}_sorted.bam.bai"
+	output:
+		"{prefix}/{sample}/{sample}.bw"
+	log:
+		"{prefix}/{sample}/logs/{sample}_bamCoverage.log"
+	shell:
+		'bamCoverage -b {input.bam} -o {output} \
+		-p 6 --normalizeUsing CPM 2>&1 | tee -a {log}'
